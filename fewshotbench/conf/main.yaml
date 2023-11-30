@@ -1,5 +1,5 @@
 defaults:
-  - dataset: tabula_muris
+  - dataset: swissprot
   - method: maml
 
 model: FCNet
@@ -28,8 +28,8 @@ checkpoint:
   time: latest
 
 wandb:
-  project: ???
-  entity: ???
+  project: DL_Biomedic
+  entity: hdasilva
   mode: "online" # Can set to offline, disabled
 
 iter_num: 600
