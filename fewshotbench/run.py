@@ -187,6 +187,10 @@ def test(cfg, model, split):
                 test_loader = pickle.load(f)
         else:
             print("No cached dataset found, initializing...")
+            if cfg.method.eval_type == 'simple':
+                test_dataset = instantiate(cfg.dataset.simple_cls, batch_size=cfg.method.val_batch, mode=split)
+            else:
+               test_dataset = instantiate(cfg.dataset.set_cls, n_episode=cfg.iter_num, mode=split)
             test_loader = test_dataset.get_data_loader()
             print("Saving dataset cache...")
             with open(f'./cache_dataset/{cfg.dataset.name}_test.pkl', 'wb') as f:
