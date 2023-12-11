@@ -43,8 +43,25 @@ def initialize_dataset_model(cfg):
     if cfg.method.name == 'maml':
         cfg.method.stop_epoch *= model.n_task  # maml use multiple tasks in one update
 
-    return train_loader, val_loader, model
+    return train_dataset, train_loader, val_loader, model
+def initialize_model(cfg, train_dataset):
 
+    # For MAML (and other optimization-based methods), need to instantiate backbone layers with fast weight
+    if cfg.method.fast_weight:
+        backbone = instantiate(cfg.backbone, x_dim=train_dataset.dim, fast_weight=True)
+    else:
+        backbone = instantiate(cfg.backbone, x_dim=train_dataset.dim)
+
+    # Instantiate few-shot method class
+    model = instantiate(cfg.method.cls, backbone=backbone)
+
+    if torch.cuda.is_available():
+        model = model.cuda()
+
+    if cfg.method.name == 'maml':
+        cfg.method.stop_epoch *= model.n_task  # maml use multiple tasks in one update
+
+    return model
 
 @hydra.main(version_base=None, config_path='conf', config_name='main')
 def run(cfg):
@@ -58,25 +75,31 @@ def run(cfg):
 
     fix_seed(cfg.exp.seed)
 
-    if cfg.use_cache:
+    if cfg.use_cache and cfg.method.type == "meta" and cfg.method.eval_type == "set":
         # check if already cached
         if os.path.isfile(f'./cache_dataset/{cfg.dataset.name}_train.pkl'):
             print("Loading cached dataset...")
+            with open(f'./cache_dataset/{cfg.dataset.name}_train_dataset.pkl', 'rb') as f:
+                train_dataset = pickle.load(f)
             with open(f'./cache_dataset/{cfg.dataset.name}_train.pkl', 'rb') as f:
                 train_loader = pickle.load(f)
             with open(f'./cache_dataset/{cfg.dataset.name}_val.pkl', 'rb') as f:
                 val_loader = pickle.load(f)
+            
         else:
             print("No cached dataset found, initializing...")
-            train_loader, val_loader, model = initialize_dataset_model(cfg)
+            train_dataset, train_loader, val_loader, model = initialize_dataset_model(cfg)
             print("Saving dataset cache...")
+            with open(f'./cache_dataset/{cfg.dataset.name}_train_dataset.pkl', 'wb') as f:
+                pickle.dump(train_dataset, f)
             with open(f'./cache_dataset/{cfg.dataset.name}_train.pkl', 'wb') as f:
-                pickle.dump(train_loader.dataset, f)
+                pickle.dump(train_loader, f)
             with open(f'./cache_dataset/{cfg.dataset.name}_val.pkl', 'wb') as f:
-                pickle.dump(val_loader.dataset, f)
+                pickle.dump(val_loader, f)
     else:
-        train_loader, val_loader, model = initialize_dataset_model(cfg)
-            
+        train_dataset, train_loader, val_loader, model = initialize_dataset_model(cfg)
+    
+    model = initialize_model(cfg, train_dataset)
     if cfg.mode == "train":
         model = train(train_loader, val_loader, model, cfg)
 
@@ -155,12 +178,8 @@ def train(train_loader, val_loader, model, cfg):
 
 
 def test(cfg, model, split):
-    if cfg.method.eval_type == 'simple':
-        test_dataset = instantiate(cfg.dataset.simple_cls, batch_size=cfg.method.val_batch, mode=split)
-    else:
-        test_dataset = instantiate(cfg.dataset.set_cls, n_episode=cfg.iter_num, mode=split)
 
-    if cfg.use_cache:
+    if cfg.use_cache and cfg.method.eval_type == "set":
         # check if already cached
         if os.path.isfile(f'./cache_dataset/{cfg.dataset.name}_test.pkl'):
             print("Loading cached dataset...")
@@ -173,6 +192,10 @@ def test(cfg, model, split):
             with open(f'./cache_dataset/{cfg.dataset.name}_test.pkl', 'wb') as f:
                 pickle.dump(test_loader.dataset, f)
     else:
+        if cfg.method.eval_type == 'simple':
+            test_dataset = instantiate(cfg.dataset.simple_cls, batch_size=cfg.method.val_batch, mode=split)
+        else:
+            test_dataset = instantiate(cfg.dataset.set_cls, n_episode=cfg.iter_num, mode=split)
         test_loader = test_dataset.get_data_loader()
 
     model_file = get_model_file(cfg)
