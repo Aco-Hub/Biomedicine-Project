@@ -189,6 +189,26 @@ class CanNet(MetaTemplate):
                 print('Epoch {:d} | Batch {:d}/{:d} | Loss {:f}'.format(epoch, i, len(train_loader),
                                                                         avg_loss / float(i + 1)))
         return avg_loss/len(train_loader)
+    
+    def correct(self, x):
+        # Compute the predictions scores.
+        scores, _ = self.set_forward(x)
+
+        # Compute the top1 elements.
+        topk_scores, topk_labels = scores.data.topk(k=1, dim=1, largest=True, sorted=True)
+
+        # Detach the variables (transforming to numpy also detach the tensor)
+        topk_ind = topk_labels.cpu().numpy()
+
+        # Create the category labels for the queries, this is unique for the few shot learning setup
+        y_query = np.repeat(range(self.n_way), self.n_query)
+
+        #>>> np.repeat(range(10), 2)
+        #array([0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9])
+
+        # Compute number of elements that are correctly classified.
+        top1_correct = np.sum(topk_ind[:, 0] == y_query)
+        return float(top1_correct), len(y_query)
 def euclidean_dist( x, y):
     # x: N x D
     # y: M x D

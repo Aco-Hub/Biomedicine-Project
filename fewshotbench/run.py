@@ -4,6 +4,7 @@ from hydra.utils import instantiate
 from math import ceil
 from omegaconf import OmegaConf
 from prettytable import PrettyTable
+import pickle
 
 from datasets.cell.tabula_muris import *
 from utils.io_utils import get_resume_file, hydra_setup, fix_seed, model_to_dict, opt_to_dict, get_model_file
@@ -57,8 +58,25 @@ def run(cfg):
 
     fix_seed(cfg.exp.seed)
 
-    train_loader, val_loader, model = initialize_dataset_model(cfg)
-
+    if cfg.use_cache:
+        # check if already cached
+        if os.path.isfile(f'./cache_dataset/{cfg.dataset.name}_train.pkl'):
+            print("Loading cached dataset...")
+            with open(f'./cache_dataset/{cfg.dataset.name}_train.pkl', 'rb') as f:
+                train_loader = pickle.load(f)
+            with open(f'./cache_dataset/{cfg.dataset.name}_val.pkl', 'rb') as f:
+                val_loader = pickle.load(f)
+        else:
+            print("No cached dataset found, initializing...")
+            train_loader, val_loader, model = initialize_dataset_model(cfg)
+            print("Saving dataset cache...")
+            with open(f'./cache_dataset/{cfg.dataset.name}_train.pkl', 'wb') as f:
+                pickle.dump(train_loader.dataset, f)
+            with open(f'./cache_dataset/{cfg.dataset.name}_val.pkl', 'wb') as f:
+                pickle.dump(val_loader.dataset, f)
+    else:
+        train_loader, val_loader, model = initialize_dataset_model(cfg)
+            
     if cfg.mode == "train":
         model = train(train_loader, val_loader, model, cfg)
 
@@ -79,7 +97,6 @@ def run(cfg):
         display_table.add_row(row)
 
     print(display_table)
-
 
 def train(train_loader, val_loader, model, cfg):
     cfg.checkpoint.time = time.strftime('%Y%m%d_%H%M%S', time.localtime())
@@ -143,7 +160,20 @@ def test(cfg, model, split):
     else:
         test_dataset = instantiate(cfg.dataset.set_cls, n_episode=cfg.iter_num, mode=split)
 
-    test_loader = test_dataset.get_data_loader()
+    if cfg.use_cache:
+        # check if already cached
+        if os.path.isfile(f'./cache_dataset/{cfg.dataset.name}_test.pkl'):
+            print("Loading cached dataset...")
+            with open(f'./cache_dataset/{cfg.dataset.name}_test.pkl', 'rb') as f:
+                test_loader = pickle.load(f)
+        else:
+            print("No cached dataset found, initializing...")
+            test_loader = test_dataset.get_data_loader()
+            print("Saving dataset cache...")
+            with open(f'./cache_dataset/{cfg.dataset.name}_test.pkl', 'wb') as f:
+                pickle.dump(test_loader.dataset, f)
+    else:
+        test_loader = test_dataset.get_data_loader()
 
     model_file = get_model_file(cfg)
 

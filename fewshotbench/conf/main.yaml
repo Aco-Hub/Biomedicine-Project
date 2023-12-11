@@ -30,6 +30,8 @@ checkpoint:
 wandb:
   project: DL_Biomedic
   entity: hdasilva
-  mode: "offline" # Can set to offline, disabled
+  mode: "online" # Can set to offline, disabled
 
 iter_num: 600
+
+use_cache: true
