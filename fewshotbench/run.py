@@ -178,39 +178,13 @@ def train(train_loader, val_loader, model, cfg):
 
 
 def test(cfg, model, split):
-    """
-    if cfg.use_cache and cfg.method.eval_type == "set":
-        # check if already cached
-        if os.path.isfile(f'./cache_dataset/{cfg.dataset.name}_test.pkl'):
-            print("Loading cached dataset...")
-            with open(f'./cache_dataset/{cfg.dataset.name}_test.pkl', 'rb') as f:
-                test_loader = pickle.load(f)
-        else:
-            print("No cached dataset found, initializing...")
-            if cfg.method.eval_type == 'simple':
-                test_dataset = instantiate(cfg.dataset.simple_cls, batch_size=cfg.method.val_batch, mode=split)
-            else:
-               test_dataset = instantiate(cfg.dataset.set_cls, n_episode=cfg.iter_num, mode=split)
-            test_loader = test_dataset.get_data_loader()
-            print("Saving dataset cache...")
-            with open(f'./cache_dataset/{cfg.dataset.name}_test.pkl', 'wb') as f:
-                pickle.dump(test_loader.dataset, f)
-    else:
-        if cfg.method.eval_type == 'simple':
-            test_dataset = instantiate(cfg.dataset.simple_cls, batch_size=cfg.method.val_batch, mode=split)
-        else:
-            test_dataset = instantiate(cfg.dataset.set_cls, n_episode=cfg.iter_num, mode=split)
-        test_loader = test_dataset.get_data_loader()
-    """
-
-    # fast_weight: False
 
     if cfg.method.eval_type == 'simple':
         test_dataset = instantiate(cfg.dataset.simple_cls, batch_size=cfg.method.val_batch, mode=split)
     else:
         test_dataset = instantiate(cfg.dataset.set_cls, n_episode=cfg.iter_num, mode=split)
-
     test_loader = test_dataset.get_data_loader()
+
     model_file = get_model_file(cfg)   
 
     model.load_state_dict(torch.load(model_file)['state'])
