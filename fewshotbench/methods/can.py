@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 import torch.nn.functional as F
+import wandb
 
 from methods.meta_template import MetaTemplate
 
@@ -107,7 +108,7 @@ class CanNet(MetaTemplate):
         l2 = criterion(ytest, y_true_query)
         loss = self.weight_factor * l1 + l2
 
-        return loss
+        return loss, l1, l2
     def fusion_layer(self, z):
         """
         Generates cross attention map A
@@ -171,24 +172,38 @@ class CanNet(MetaTemplate):
         print_freq = 10
 
         avg_loss = 0
-        self.train()
+        avg_l1 = 0
+        avg_l2 = 0
         for i, (x, y) in enumerate(train_loader):
             y_all = y.cuda()
 
             # y true query is the global labels for the query set
             y_true_query = y_all[:, self.n_support:]
 
-            self.n_query = x.size(1) - self.n_support
+            if isinstance(x, list):
+                self.n_query = x[0].size(1) - self.n_support
+                if self.change_way:
+                    self.n_way = x[0].size(0)
+            else: 
+                self.n_query = x.size(1) - self.n_support
+                if self.change_way:
+                    self.n_way = x.size(0)
             optimizer.zero_grad()
-            loss = self.set_forward_loss(x, y_true_query)
+            loss, l1, l2 = self.set_forward_loss(x, y_true_query)
             loss.backward()
             optimizer.step()
             avg_loss = avg_loss + loss.item()
+            avg_l1 = avg_l1 + l1.item()
+            avg_l2 = avg_l2 + l2.item()
+
 
             if i % print_freq == 0:
+                # print(optimizer.state_dict()['param_groups'][0]['lr'])
                 print('Epoch {:d} | Batch {:d}/{:d} | Loss {:f}'.format(epoch, i, len(train_loader),
                                                                         avg_loss / float(i + 1)))
-        return avg_loss/len(train_loader)
+                wandb.log({"loss/train": avg_loss / float(i + 1)})
+                wandb.log({"loss/train_loss1": avg_l1 / float(i + 1)})
+                wandb.log({"loss/train_loss2": avg_l2 / float(i + 1)})
     
     def correct(self, x):
         # Compute the predictions scores.

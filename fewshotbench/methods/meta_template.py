@@ -128,6 +128,7 @@ class MetaTemplate(nn.Module):
         else:
             return acc_mean
 
+
     def set_forward_adaptation(self, x,
                                is_feature=True):  # further adaptation, default is fixing feature and train a new softmax clasifier
         assert is_feature == True, 'Feature is fixed in further adaptation'
