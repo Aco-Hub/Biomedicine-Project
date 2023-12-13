@@ -41,7 +41,7 @@ class CanNet(MetaTemplate):
 
         fusion = z * w.unsqueeze(2)
 
-        # here convolution is the same as a mean
+        # here convolution is the same as an average
         conv = torch.mean(fusion,dim=-1)
 
         A = self.softmax(conv/self.temperature)
@@ -257,8 +257,10 @@ class CrossEntropyLoss(nn.Module):
         self.logsoftmax = nn.LogSoftmax(dim=1)
 
     def forward(self, inputs, targets):
+
          # inputs: torch.Size([n_query, n_classes, feat_dim]), targets: torch.Size([n_query])
         inputs = inputs.view(inputs.size(0), inputs.size(1), -1)
+        
         # inputs: torch.Size([n_query, n_classes, feat_dim])
         log_probs = self.logsoftmax(inputs)
 
