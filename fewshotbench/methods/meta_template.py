@@ -98,7 +98,7 @@ class MetaTemplate(nn.Module):
                 # print(optimizer.state_dict()['param_groups'][0]['lr'])
                 print('Epoch {:d} | Batch {:d}/{:d} | Loss {:f}'.format(epoch, i, len(train_loader),
                                                                         avg_loss / float(i + 1)))
-                #wandb.log({"loss": avg_loss / float(i + 1)})
+                wandb.log({"loss": avg_loss / float(i + 1)})
 
     def test_loop(self, test_loader, record=None, return_std=False):
         correct = 0

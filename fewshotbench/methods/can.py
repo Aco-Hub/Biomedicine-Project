@@ -25,90 +25,8 @@ class CanNet(MetaTemplate):
         self.weight_factor = 0.5
         self.cosine_distance = nn.CosineSimilarity(dim=2, eps=1e-6)
 
-    def set_forward(self, x, is_feature=False):
-        # Compute the prototypes (support) and queries (embeddings) for each datapoint.
-        z_support, z_query = self.parse_feature(x, is_feature)
-            
-        # Compute the prototype.
-        z_support = z_support.contiguous().view(self.n_way, self.n_support, -1)
-        z_proto = z_support.mean(dim=1)
-        
-        # Format the queries for the similarity computation.
-        z_query = z_query.contiguous().view(self.n_way * self.n_query, -1)
-        z_proto_attention, z_query_attention = self.cross_attention_module(z_proto, z_query)
-        
-        # ftest is used for the global classification loss, the second loss
-        ftest = z_query_attention
-        
-        # z_proto_attention: torch.Size([5, 75, 64]) ie. [n_way, n_query, feat_dim]
-        # z_query_attention: torch.Size([5, 75, 64]) ie. [n_way, n_query, feat_dim]
-        z_proto_attention_mean = z_proto_attention.mean(dim=1) # torch.Size([5, 64])
-        z_query_attention_mean = z_query_attention.mean(dim=0) # torch.Size([75, 64])
 
-        # Compute similarity score based on the euclidean distance between prototypes and queries.
-        #scores = -euclidean_dist(z_query, z_proto)
-        scores = -euclidean_dist(z_query_attention_mean, z_proto_attention_mean)
-
-        # use cosine similarity instead of euclidean distance for the scores
-        #score_cosine = self.cosine_distance(z_query_attention_mean.unsqueeze(1), z_proto_attention_mean.unsqueeze(0))
-        #scores = score_cosine
-
-        return scores, ftest
-
-    def set_forward_loss(self, x, y_true_query):
-        # Compute the similarity scores between the prototypes and the queries.
-        scores, ftest = self.set_forward(x)
-        
-        # Create the category labels for the queries.
-        y_query = torch.from_numpy(np.repeat(range(self.n_way), self.n_query))
-        y_query = Variable(y_query).to(self.device)
-
-        # Compute the knn loss (base protonet loss)
-        l1 = self.loss_fn(scores, y_query)
-
-        # Compute the global classification loss
-
-        def one_hot(labels_train):
-            """
-            Turn the labels_train to one-hot encoding.
-            Args:
-                labels_train: [batch_size, num_train_examples]
-            Return:
-                labels_train_1hot: [batch_size, num_train_examples, K]
-            """
-            labels_train = labels_train.cpu()
-            nKnovel = 1 + labels_train.max()
-            labels_train_1hot_size = list(labels_train.size()) + [nKnovel,]
-            labels_train_unsqueeze = labels_train.unsqueeze(dim=labels_train.dim())
-            labels_train_1hot = torch.zeros(labels_train_1hot_size).scatter_(len(labels_train_1hot_size) - 1, labels_train_unsqueeze, 1)
-            return labels_train_1hot
-
-        y_query_one_hot = one_hot(y_query).cuda()
-        # ftest is of shape (5, 75, 64), change it to (1, 75, 64, 5) to be able to do matmul
-        ftest = ftest.unsqueeze(0) # torch.Size([1, 5, 75, 64])
-        ftest = ftest.transpose(2, 3) # torch.Size([1, 5, 64, 75])
-        ftest = ftest.transpose(1, 3) # torch.Size([1, 75, 64, 5])
-        
-        # this matmul is incorrect should be ftest: (1, 75, 64, 5) and y_query_one_hot: (1, 75, 5, 1)
-        y_query_one_hot = y_query_one_hot.unsqueeze(0) # torch.Size([1, 5, 75, 5])
-        y_query_one_hot = y_query_one_hot.unsqueeze(3) # torch.Size([1, 5, 75, 5, 1])
-        ftest = torch.matmul(ftest, y_query_one_hot) # torch.Size([1, 75, 64, 1])
-        ftest = ftest.view(-1, self.m) # torch.Size([75, 64])
-
-        ftest = ftest.unsqueeze(2) # torch.Size([75, 64, 1])
-
-        ytest = self.linear(ftest) # torch.Size([75, 64, 59])
-        ytest = ytest.transpose(2, 1) # torch.Size([75, 59, 64])
-        y_true_query = y_true_query.reshape(-1) #torch.Size([75])
-
-        # special loss used in the paper
-        criterion = CrossEntropyLoss()
-
-        # compute the global classification loss
-        l2 = criterion(ytest, y_true_query)
-        loss = self.weight_factor * l1 + l2
-
-        return loss, l1, l2
+    
     def fusion_layer(self, z):
         """
         Generates cross attention map A
@@ -116,13 +34,14 @@ class CanNet(MetaTemplate):
         :return: A  [n_dim]
         """
 
+        # compute global average pooling
         GAP = torch.mean(z, dim=-2)
 
         w = self.w2(self.activation(self.w1(GAP)))
 
-
         fusion = z * w.unsqueeze(2)
 
+        # here convolution is the same as a mean
         conv = torch.mean(fusion,dim=-1)
 
         A = self.softmax(conv/self.temperature)
@@ -130,6 +49,12 @@ class CanNet(MetaTemplate):
         return A
 
     def cross_attention_module(self, z_support, z_query):
+        """
+        Takes support and query embeddings and returns cross attention embeddings
+        :param z_support: [n_way, n_support, n_dim]
+        :param z_query: [n_way, n_query, n_dim]
+        :return: P_bk [n_way, n_support, n_dim], Q_bk [n_way, n_query, n_dim]
+        """
 
         def correlation_layer(z_support, z_query): 
             """
@@ -164,6 +89,92 @@ class CanNet(MetaTemplate):
         Q_bk = Q_b.unsqueeze(0) * (1 + A_q)
 
         return P_bk, Q_bk
+
+    def set_forward(self, x, is_feature=False):
+        # Compute the prototypes (support) and queries (embeddings) for each datapoint.
+        z_support, z_query = self.parse_feature(x, is_feature)
+            
+        # Compute the prototype.
+        z_support = z_support.contiguous().view(self.n_way, self.n_support, -1)
+        z_proto = z_support.mean(dim=1)
+        
+        # Format the queries for the similarity computation.
+        z_query = z_query.contiguous().view(self.n_way * self.n_query, -1)
+        z_proto_attention, z_query_attention = self.cross_attention_module(z_proto, z_query)
+        
+        # ftest is used for the global classification loss, the second loss
+        ftest = z_query_attention
+        
+        # z_proto_attention: torch.Size([n_way, n_query, feat_dim]) ie. [n_way, n_query, feat_dim]
+        # z_query_attention: torch.Size([n_way, n_query, feat_dim]) ie. [n_way, n_query, feat_dim]
+        z_proto_attention_mean = z_proto_attention.mean(dim=1) # torch.Size([n_way, feat_dim])
+        z_query_attention_mean = z_query_attention.mean(dim=0) # torch.Size([n_query, feat_dim])
+
+        # Compute similarity score based on the euclidean distance between prototypes and queries.
+        #scores = -euclidean_dist(z_query, z_proto)
+        scores = -euclidean_dist(z_query_attention_mean, z_proto_attention_mean)
+
+        # use cosine similarity instead of euclidean distance for the scores
+        #score_cosine = self.cosine_distance(z_query_attention_mean.unsqueeze(1), z_proto_attention_mean.unsqueeze(0))
+        #scores = score_cosine
+
+        return scores, ftest
+
+    def set_forward_loss(self, x, y_true_query):
+        # Compute the similarity scores between the prototypes and the queries.
+        scores, ftest = self.set_forward(x)
+        
+        # Create the category labels for the queries.
+        y_query = torch.from_numpy(np.repeat(range(self.n_way), self.n_query))
+        y_query = Variable(y_query).to(self.device)
+
+        # Compute the knn loss (base protonet loss)
+        l1 = self.loss_fn(scores, y_query)
+
+        # Compute the global classification loss
+
+        def one_hot(labels_train):
+            """
+            Turn the labels_train to one-hot encoding. Taken from: https://github.com/blue-blue272/fewshot-CAN
+            Args:
+                labels_train: [batch_size, num_train_examples]
+            Return:
+                labels_train_1hot: [batch_size, num_train_examples, K]
+            """
+            labels_train = labels_train.cpu()
+            nKnovel = 1 + labels_train.max()
+            labels_train_1hot_size = list(labels_train.size()) + [nKnovel,]
+            labels_train_unsqueeze = labels_train.unsqueeze(dim=labels_train.dim())
+            labels_train_1hot = torch.zeros(labels_train_1hot_size).scatter_(len(labels_train_1hot_size) - 1, labels_train_unsqueeze, 1)
+            return labels_train_1hot
+
+        y_query_one_hot = one_hot(y_query).cuda()
+
+        # ftest is of shape (n_way, n_query, feat_dim), change it to (1, n_query, feat_dim, n_way) to be able to do matmul
+        ftest = ftest.unsqueeze(0) # torch.Size([1, n_way, n_query, feat_dim])
+        ftest = ftest.transpose(2, 3) # torch.Size([1, n_way, feat_dim, n_query])
+        ftest = ftest.transpose(1, 3) # torch.Size([1, n_query, feat_dim, n_way])
+        
+        # this matmul is incorrect should be ftest: (1, n_query, feat_dim, n_way) and y_query_one_hot: (1, n_query, n_way, 1)
+        y_query_one_hot = y_query_one_hot.unsqueeze(0) # torch.Size([1, n_way, n_query, n_way])
+        y_query_one_hot = y_query_one_hot.unsqueeze(3) # torch.Size([1, n_way, n_query, n_way, 1])
+        ftest = torch.matmul(ftest, y_query_one_hot) # torch.Size([1, n_query, feat_dim, 1])
+        ftest = ftest.view(-1, self.m) # torch.Size([n_query, feat_dim])
+
+        ftest = ftest.unsqueeze(2) # torch.Size([n_query, feat_dim, 1])
+
+        ytest = self.linear(ftest) # torch.Size([n_query, feat_dim, n_classes])
+        ytest = ytest.transpose(2, 1) # torch.Size([n_query, n_classes, feat_dim])
+        y_true_query = y_true_query.reshape(-1) #torch.Size([n_query])
+
+        # special loss used in the paper
+        criterion = CrossEntropyLoss()
+
+        # compute the global classification loss
+        l2 = criterion(ytest, y_true_query)
+        loss = self.weight_factor * l1 + l2
+
+        return loss, l1, l2
 
     def train_loop(self, epoch, train_loader, optimizer):
         """
@@ -219,7 +230,7 @@ class CanNet(MetaTemplate):
         y_query = np.repeat(range(self.n_way), self.n_query)
 
         #>>> np.repeat(range(10), 2)
-        #array([0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9])
+        #array([0, 0, 1, 1, 2, 2, 3, 3, 4, 4, n_way, n_way, 6, 6, 7, 7, 8, 8, 9, 9])
 
         # Compute number of elements that are correctly classified.
         top1_correct = np.sum(topk_ind[:, 0] == y_query)
@@ -238,17 +249,20 @@ def euclidean_dist( x, y):
     return torch.pow(x - y, 2).sum(2)
 
 class CrossEntropyLoss(nn.Module):
+    """
+    Custom cross entropy loss used in the paper cf. https://github.com/blue-blue272/fewshot-CAN
+    """
     def __init__(self):
         super(CrossEntropyLoss, self).__init__()
         self.logsoftmax = nn.LogSoftmax(dim=1)
 
-    def forward(self, inputs, targets): # inputs: torch.Size([75, 59, 64]), targets: torch.Size([75])
+    def forward(self, inputs, targets):
+         # inputs: torch.Size([n_query, n_classes, feat_dim]), targets: torch.Size([n_query])
         inputs = inputs.view(inputs.size(0), inputs.size(1), -1)
-        # inputs: torch.Size([75, 59, 64])
+        # inputs: torch.Size([n_query, n_classes, feat_dim])
         log_probs = self.logsoftmax(inputs)
 
-        # below = problematic line
-        # torch zeros (75, 59)
+        # torch zeros (n_query, n_classes)
         targets = torch.zeros(inputs.size(0), inputs.size(1)).scatter_(1, targets.unsqueeze(1).data.cpu(), 1)
         targets = targets.unsqueeze(-1)
         targets = targets.cuda()
